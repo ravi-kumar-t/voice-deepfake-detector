@@ -80,3 +80,40 @@ export async function predictAudio(audioFile, filename = 'recording.wav') {
   const data = await response.json();
   return data;
 }
+
+/**
+ * Send audio file (.wav) to FastAPI /predict-segments endpoint
+ * @param {File | Blob} audioFile
+ * @param {string} filename
+ * @returns {Promise<{ filename: string, segments: Array<{ start: number, end: number, prediction: 'REAL' | 'SYNTHETIC', synthetic_probability: number, confidence: number }> }>}
+ */
+export async function predictSegments(audioFile, filename = 'recording.wav') {
+  const formData = new FormData();
+  
+  if (audioFile instanceof Blob && !(audioFile instanceof File)) {
+    formData.append('file', audioFile, filename);
+  } else {
+    formData.append('file', audioFile);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/predict-segments`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    let errorDetail = `Server returned HTTP ${response.status}`;
+    try {
+      const errJson = await response.json();
+      if (errJson.detail) {
+        errorDetail = errJson.detail;
+      }
+    } catch {
+      // fallback
+    }
+    throw new Error(errorDetail);
+  }
+
+  const data = await response.json();
+  return data;
+}

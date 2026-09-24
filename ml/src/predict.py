@@ -17,7 +17,15 @@ import torch
 import sys
 sys.path.append(str(Path(__file__).resolve().parent))
 import config
-from preprocessing import preprocess_audio
+from preprocessing import (
+    preprocess_audio,
+    load_audio,
+    convert_to_mono,
+    resample_audio,
+    normalize_waveform,
+    pad_or_truncate,
+    extract_mel_spectrogram
+)
 from model import VoiceDeepfakeCNNLSTM
 
 
@@ -82,6 +90,81 @@ def predict_audio(
         confidence = (1.0 - prob_fake) * 100.0
 
     return prediction, confidence, prob_fake
+
+
+def predict_audio_segments(
+    audio_path: Path,
+    model: VoiceDeepfakeCNNLSTM,
+    device: torch.device = config.DEVICE,
+    num_segments: int = 4
+) -> list:
+    """
+    Performs segment-level deepfake analysis using native temporal slicing.
+    
+    1. Passes full audio through the standard preprocessing to produce an 80-bin Mel-spectrogram.
+    2. Runs a single forward pass through CNN feature extraction and BiLSTM temporal sequence modeling.
+    3. Divides the resulting BiLSTM temporal hidden states into consecutive temporal slices.
+    4. Mean-pools each segment's temporal representations and passes them through the classifier head.
+    5. Applies sigmoid activation to compute localized segment evidence probabilities.
+    """
+    # 1. Preprocess full audio using existing pipeline: Shape (1, 80, Time_Steps)
+    mel_tensor = preprocess_audio(audio_path)
+
+    # 2. Add batch dimension and move to device: Shape (1, 1, 80, Time_Steps)
+    mel_tensor = mel_tensor.unsqueeze(0).to(device)
+
+    segments = []
+    model.eval()
+
+    with torch.no_grad():
+        # CNN Feature Extraction
+        x = model.conv_block1(mel_tensor)
+        x = model.conv_block2(x)
+
+        # Reshape for LSTM: (Batch, Time, Channels * Freq)
+        batch_size, channels, freq, time_steps = x.shape
+        x = x.permute(0, 3, 1, 2).contiguous().view(batch_size, time_steps, channels * freq)
+
+        # BiLSTM Temporal Sequence Modeling: Shape (Batch, Time, LSTM_Dim)
+        lstm_out, _ = model.lstm(x)
+
+        # Dynamically partition temporal frames into consecutive regions
+        t = time_steps
+        seg_frames = t / float(num_segments)
+
+        for i in range(num_segments):
+            start_sec = i * (config.AUDIO_DURATION / num_segments)
+            end_sec = (i + 1) * (config.AUDIO_DURATION / num_segments)
+
+            s_idx = int(round(i * seg_frames))
+            e_idx = int(round((i + 1) * seg_frames))
+            if s_idx >= e_idx:
+                e_idx = s_idx + 1
+            e_idx = min(e_idx, t)
+
+            # Mean-pool LSTM temporal representations for this specific time window
+            seg_pooled = torch.mean(lstm_out[:, s_idx:e_idx, :], dim=1)
+
+            # Pass through existing classifier head
+            seg_logit = model.classifier(seg_pooled)
+            prob_fake = torch.sigmoid(seg_logit).item()
+
+            if prob_fake >= 0.5:
+                pred = "SYNTHETIC"
+                conf = prob_fake * 100.0
+            else:
+                pred = "REAL"
+                conf = (1.0 - prob_fake) * 100.0
+
+            segments.append({
+                "start": round(start_sec, 2),
+                "end": round(end_sec, 2),
+                "prediction": pred,
+                "synthetic_probability": round(prob_fake, 4),
+                "confidence": round(conf, 2)
+            })
+
+    return segments
 
 
 def main():

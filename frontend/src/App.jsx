@@ -9,7 +9,7 @@ import SegmentAnalysis from './components/SegmentAnalysis';
 import ModelSpecsCard from './components/ModelSpecsCard';
 import HowItWorks from './components/HowItWorks';
 
-import { checkBackendHealth, predictAudio } from './services/api';
+import { checkBackendHealth, predictAudio, predictSegments } from './services/api';
 import { decodeAudioData } from './utils/audioHelper';
 
 export default function App() {
@@ -39,6 +39,12 @@ export default function App() {
   const [analysisStage, setAnalysisStage] = useState('');
   const [detectionResult, setDetectionResult] = useState(null);
   const [error, setError] = useState(null);
+
+  // Segment Analysis State
+  const [segmentData, setSegmentData] = useState(null);
+  const [selectedSegment, setSelectedSegment] = useState(null);
+  const [isAnalyzingSegments, setIsAnalyzingSegments] = useState(false);
+  const [segmentError, setSegmentError] = useState(null);
 
   // Audio Element ref for HTML5 playback
   const audioRef = useRef(null);
@@ -106,6 +112,9 @@ export default function App() {
     try {
       setError(null);
       setDetectionResult(null);
+      setSegmentData(null);
+      setSelectedSegment(null);
+      setSegmentError(null);
       setIsPlaying(false);
       setCurrentTime(0);
 
@@ -145,6 +154,9 @@ export default function App() {
     setAudioBuffer(null);
     setAudioMetadata({ duration: 0, sampleRate: 0, channels: 0 });
     setDetectionResult(null);
+    setSegmentData(null);
+    setSelectedSegment(null);
+    setSegmentError(null);
     setIsPlaying(false);
     setCurrentTime(0);
     setDuration(0);
@@ -161,7 +173,6 @@ export default function App() {
       audioRef.current.pause();
       setIsPlaying(false);
     } else {
-      // If at end, start from beginning
       if (currentTime >= duration && duration > 0) {
         audioRef.current.currentTime = 0;
         setCurrentTime(0);
@@ -188,7 +199,7 @@ export default function App() {
   };
 
   // --------------------------------------------------------------------------
-  // Deepfake Analysis Trigger
+  // Deepfake Analysis Trigger (Runs both /predict and /predict-segments)
   // --------------------------------------------------------------------------
   const handleAnalyze = async () => {
     if (!audioFile) {
@@ -202,7 +213,9 @@ export default function App() {
     }
 
     setIsAnalyzing(true);
+    setIsAnalyzingSegments(true);
     setError(null);
+    setSegmentError(null);
 
     // Progressive UI feedback stages
     setAnalysisStage('Analyzing audio...');
@@ -213,6 +226,7 @@ export default function App() {
       setAnalysisStage('Running CNN-BiLSTM analysis...');
     }, 500);
 
+    // 1. Run main overall prediction
     try {
       const result = await predictAudio(audioFile, audioFile.name || 'sample.wav');
       clearTimeout(stageTimer1);
@@ -225,6 +239,17 @@ export default function App() {
     } finally {
       setIsAnalyzing(false);
       setAnalysisStage('');
+    }
+
+    // 2. Run segment-level prediction concurrently/independently
+    try {
+      const segResult = await predictSegments(audioFile, audioFile.name || 'sample.wav');
+      setSegmentData(segResult);
+    } catch (err) {
+      console.warn('Segment analysis error:', err);
+      setSegmentError(err.message || 'Segment analysis unavailable');
+    } finally {
+      setIsAnalyzingSegments(false);
     }
   };
 
@@ -294,6 +319,7 @@ export default function App() {
           audioBuffer={audioBuffer}
           currentTime={currentTime}
           duration={duration}
+          selectedSegment={selectedSegment}
         />
       </div>
 
@@ -301,6 +327,11 @@ export default function App() {
       <SegmentAnalysis
         audioBuffer={audioBuffer}
         result={detectionResult}
+        segmentData={segmentData}
+        selectedSegment={selectedSegment}
+        onSelectSegment={setSelectedSegment}
+        isAnalyzingSegments={isAnalyzingSegments}
+        segmentError={segmentError}
       />
 
       {/* Architecture Specs & Forensics Methodology */}

@@ -5,7 +5,8 @@ import { computeSpectrogram, getSpectrogramColor } from '../utils/audioHelper';
 export default function SpectrogramViewer({
   audioBuffer,
   currentTime,
-  duration
+  duration,
+  selectedSegment
 }) {
   const canvasRef = useRef(null);
 
@@ -66,6 +67,25 @@ export default function SpectrogramViewer({
 
     ctx.putImageData(imgData, 0, 0);
 
+    // Draw Selected Segment Highlight Overlay
+    if (selectedSegment && duration > 0) {
+      const segStartX = (selectedSegment.start / duration) * width;
+      const segEndX = (Math.min(selectedSegment.end, duration) / duration) * width;
+      const segWidth = Math.max(2, segEndX - segStartX);
+
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.22)';
+      ctx.fillRect(segStartX, 0, segWidth, height);
+
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(segStartX, 0, segWidth, height);
+
+      // Label on top
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = '10px "JetBrains Mono", monospace';
+      ctx.fillText(`Seg [${selectedSegment.start.toFixed(1)}–${selectedSegment.end.toFixed(1)}s]`, segStartX + 4, 14);
+    }
+
     // Draw Grid & Frequency Guide Lines
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
     ctx.lineWidth = 1;
@@ -105,7 +125,7 @@ export default function SpectrogramViewer({
       ctx.shadowBlur = 0; // reset
     }
 
-  }, [audioBuffer, currentTime, duration]);
+  }, [audioBuffer, currentTime, duration, selectedSegment]);
 
   // Fast RGB lookup for heatmap
   const getRGB = (val) => {
